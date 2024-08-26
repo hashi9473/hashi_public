@@ -1,0 +1,165 @@
+# by Haiyang
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+import os
+
+
+def kge(y_true, y_pred)
+    r = np.corrcoef(y_true, y_pred)[0, 1]
+    beta = np.mean(y_pred)  np.mean(y_true)
+    gamma = (np.std(y_pred)  np.mean(y_pred))  (np.std(y_true)  np.mean(y_true))
+    return 1 - np.sqrt((r-1)2 + (beta-1)2 + (gamma-1)2)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'Using device {device}')
+
+
+data = dk 
+features = ['TA', 'TArange', 'VPD', 'WS', 'SSM', 'RSDN', 'LAI',
+            'GSmax', 'G1', 'GPPsat', 'MAT', 'MAP', 'Hc', 'sand_frac']
+target = 'ET'
+site_ids = data['SITE_ID'].unique()
+
+
+results_path = 'Dmanuscriptsdomain adaptationhydro_similarityresults_domain_loss.csv'
+if not os.path.exists(os.path.dirname(results_path))
+    os.makedirs(os.path.dirname(results_path))
+
+
+class FeatureExtractor(nn.Module)
+    def __init__(self)
+        super(FeatureExtractor, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(len(features), 64),
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU()
+        )
+
+    def forward(self, x)
+        return self.network(x)
+
+class LabelPredictor(nn.Module)
+    def __init__(self)
+        super(LabelPredictor, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 1)
+        )
+
+    def forward(self, x)
+        return self.network(x)
+
+class DomainClassifier(nn.Module)
+    def __init__(self)
+        super(DomainClassifier, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(64, 32),
+            nn.ReLU(),
+            nn.Linear(32, 2)
+        )
+
+    def forward(self, x)
+        return self.network(x)
+
+
+feature_extractor = FeatureExtractor().to(device)
+label_predictor = LabelPredictor().to(device)
+domain_classifier = DomainClassifier().to(device)
+
+
+results = []
+
+
+def adjust_lambda(progress)
+    return 2  (1 + np.exp(-10  progress)) - 1
+
+for site_index, test_site_id in enumerate(site_ids)
+    print(f'Processing site {site_index + 1}{len(site_ids)} SITE_ID={test_site_id}')
+    
+
+    train_data = data[data['SITE_ID'] != test_site_id]
+    test_data = data[data['SITE_ID'] == test_site_id]
+
+    X_train = train_data[features].values
+    y_train = train_data[target].values
+    X_test = test_data[features].values
+    y_test = test_data[target].values
+
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+
+
+    X_train = torch.tensor(X_train, dtype=torch.float32).to(device)
+    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1).to(device)
+    X_test = torch.tensor(X_test, dtype=torch.float32).to(device)
+    y_test = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1).to(device)
+
+
+    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=64, shuffle=True, num_workers=4)
+    test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=64, shuffle=False, num_workers=4)
+
+
+    optimizer = optim.Adam(list(feature_extractor.parameters()) +
+                           list(label_predictor.parameters()) +
+                           list(domain_classifier.parameters()), lr=0.001)
+    criterion_regression = nn.MSELoss()
+    criterion_domain = nn.CrossEntropyLoss()
+
+
+    num_epochs = 50  
+    
+    for epoch in range(num_epochs)
+        feature_extractor.train()
+        label_predictor.train()
+        domain_classifier.train()
+
+        progress = epoch  num_epochs
+        lambda_val = adjust_lambda(progress)
+
+        for (source_X, source_y) in train_loader
+         
+            source_features = feature_extractor(source_X)
+
+   
+            source_preds = label_predictor(source_features)
+
+            loss_regression = criterion_regression(source_preds, source_y)
+
+            domain_labels = torch.zeros(source_features.size(0), dtype=torch.long).to(device)
+            
+
+            domain_preds = domain_classifier(source_features)
+            loss_domain = criterion_domain(domain_preds, domain_labels)
+
+            loss = loss_regression + lambda_val  loss_domain
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+
+        print(f'Site {site_index + 1}{len(site_ids)}, Epoch [{epoch+1}{num_epochs}], Loss {loss.item().4f}')
+
+
+    feature_extractor.eval()
+    label_predictor.eval()
+
+    with torch.no_grad()
+        test_features = feature_extractor(X_test)
+        y_pred = label_predictor(test_features).squeeze().cpu().numpy()
+        y_true = y_test.squeeze().cpu().numpy()
+
+    kge_score = kge(y_true, y_pred)
+    results.append({'SITE_ID' test_site_id, 'KGE_domain' kge_score})
+
+results_df = pd.DataFrame(results)
+results_df.to_csv(results_path, index=False)
+print(f'Results saved to {results_path}')
