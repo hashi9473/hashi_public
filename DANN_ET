@@ -1,4 +1,3 @@
-# by Haiyang
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -7,32 +6,47 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 import os
+import itertools
 
+# 定义梯度反转层
+class GradientReversalFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, alpha):
+        ctx.alpha = alpha
+        return x.view_as(x)
 
-def kge(y_true, y_pred)
+    @staticmethod
+    def backward(ctx, grad_output):
+        output = grad_output.neg() * ctx.alpha
+        return output, None
+
+class GradientReversalLayer(nn.Module):
+    def forward(self, x, alpha):
+        return GradientReversalFunction.apply(x, alpha)
+
+def kge(y_true, y_pred):
     r = np.corrcoef(y_true, y_pred)[0, 1]
-    beta = np.mean(y_pred)  np.mean(y_true)
-    gamma = (np.std(y_pred)  np.mean(y_pred))  (np.std(y_true)  np.mean(y_true))
-    return 1 - np.sqrt((r-1)2 + (beta-1)2 + (gamma-1)2)
+    beta = np.mean(y_pred) / np.mean(y_true)
+    gamma = (np.std(y_pred)/np.mean(y_pred)) / (np.std(y_true)/np.mean(y_true))
+    return 1 - np.sqrt((r-1)**2 + (beta-1)**2 + (gamma-1)**2)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using device {device}')
 
-
-data = dk 
+# 假设data是已经加载好的DataFrame
+data = dk
 features = ['TA', 'TArange', 'VPD', 'WS', 'SSM', 'RSDN', 'LAI',
             'GSmax', 'G1', 'GPPsat', 'MAT', 'MAP', 'Hc', 'sand_frac']
 target = 'ET'
 site_ids = data['SITE_ID'].unique()
 
-
-results_path = 'Dmanuscriptsdomain adaptationhydro_similarityresults_domain_loss.csv'
-if not os.path.exists(os.path.dirname(results_path))
+results_path = 'D:/manuscripts/domain adaptation/hydro_similarity/results_domain_loss_demo2.csv'
+if not os.path.exists(os.path.dirname(results_path)):
     os.makedirs(os.path.dirname(results_path))
 
-
-class FeatureExtractor(nn.Module)
-    def __init__(self)
+# 模型定义
+class FeatureExtractor(nn.Module):
+    def __init__(self):
         super(FeatureExtractor, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(len(features), 64),
@@ -41,11 +55,11 @@ class FeatureExtractor(nn.Module)
             nn.ReLU()
         )
 
-    def forward(self, x)
+    def forward(self, x):
         return self.network(x)
 
-class LabelPredictor(nn.Module)
-    def __init__(self)
+class LabelPredictor(nn.Module):
+    def __init__(self):
         super(LabelPredictor, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(64, 32),
@@ -53,11 +67,11 @@ class LabelPredictor(nn.Module)
             nn.Linear(32, 1)
         )
 
-    def forward(self, x)
+    def forward(self, x):
         return self.network(x)
 
-class DomainClassifier(nn.Module)
-    def __init__(self)
+class DomainClassifier(nn.Module):
+    def __init__(self):
         super(DomainClassifier, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(64, 32),
@@ -65,28 +79,27 @@ class DomainClassifier(nn.Module)
             nn.Linear(32, 2)
         )
 
-    def forward(self, x)
+    def forward(self, x):
         return self.network(x)
-
 
 feature_extractor = FeatureExtractor().to(device)
 label_predictor = LabelPredictor().to(device)
 domain_classifier = DomainClassifier().to(device)
+grl = GradientReversalLayer()
 
+def adjust_lambda(progress):
+    return 2 / (1 + np.exp(-10 * progress)) - 1
 
 results = []
 
-
-def adjust_lambda(progress)
-    return 2  (1 + np.exp(-10  progress)) - 1
-
-for site_index, test_site_id in enumerate(site_ids)
-    print(f'Processing site {site_index + 1}{len(site_ids)} SITE_ID={test_site_id}')
+for site_index, test_site_id in enumerate(site_ids):
+    print(f'Processing site {site_index + 1}/{len(site_ids)} SITE_ID={test_site_id}')
     
-
+    # 数据分割
     train_data = data[data['SITE_ID'] != test_site_id]
     test_data = data[data['SITE_ID'] == test_site_id]
 
+    # 数据预处理
     X_train = train_data[features].values
     y_train = train_data[target].values
     X_test = test_data[features].values
@@ -96,70 +109,87 @@ for site_index, test_site_id in enumerate(site_ids)
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
 
+    # 转换为Tensor
+    X_train_tensor = torch.tensor(X_train, dtype=torch.float32).to(device)
+    y_train_tensor = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1).to(device)
+    X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(device)
+    y_test_tensor = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1).to(device)
 
-    X_train = torch.tensor(X_train, dtype=torch.float32).to(device)
-    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1).to(device)
-    X_test = torch.tensor(X_test, dtype=torch.float32).to(device)
-    y_test = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1).to(device)
+    # 创建数据加载器
+    source_loader = DataLoader(TensorDataset(X_train_tensor, y_train_tensor), 
+                             batch_size=64, shuffle=True, num_workers=4)
+    target_loader = DataLoader(TensorDataset(X_test_tensor), 
+                             batch_size=64, shuffle=True, num_workers=4)
+    target_loader_cycle = itertools.cycle(target_loader)
 
-
-    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=64, shuffle=True, num_workers=4)
-    test_loader = DataLoader(TensorDataset(X_test, y_test), batch_size=64, shuffle=False, num_workers=4)
-
+    # 初始化模型
+    feature_extractor = FeatureExtractor().to(device)
+    label_predictor = LabelPredictor().to(device)
+    domain_classifier = DomainClassifier().to(device)
 
     optimizer = optim.Adam(list(feature_extractor.parameters()) +
-                           list(label_predictor.parameters()) +
-                           list(domain_classifier.parameters()), lr=0.001)
-    criterion_regression = nn.MSELoss()
+                          list(label_predictor.parameters()) +
+                          list(domain_classifier.parameters()), lr=0.001)
+    criterion_reg = nn.MSELoss()
     criterion_domain = nn.CrossEntropyLoss()
 
-
-    num_epochs = 50  
-    
-    for epoch in range(num_epochs)
+    # 训练循环
+    num_epochs = 50
+    for epoch in range(num_epochs):
         feature_extractor.train()
         label_predictor.train()
         domain_classifier.train()
 
-        progress = epoch  num_epochs
+        progress = epoch / num_epochs
         lambda_val = adjust_lambda(progress)
 
-        for (source_X, source_y) in train_loader
-         
+        for batch_idx, (source_X, source_y) in enumerate(source_loader):
+            # 获取目标域数据
+            target_X = next(target_loader_cycle)[0].to(device)
+
+            # 前向传播
             source_features = feature_extractor(source_X)
+            target_features = feature_extractor(target_X)
 
-   
-            source_preds = label_predictor(source_features)
+            # 标签预测
+            preds = label_predictor(source_features)
+            loss_reg = criterion_reg(preds, source_y)
 
-            loss_regression = criterion_regression(source_preds, source_y)
+            # 域分类（带梯度反转）
+            source_domain = domain_classifier(grl(source_features, lambda_val))
+            target_domain = domain_classifier(grl(target_features, lambda_val))
 
-            domain_labels = torch.zeros(source_features.size(0), dtype=torch.long).to(device)
-            
+            # 域分类损失
+            domain_labels = torch.cat([
+                torch.zeros(source_X.size(0)),  # 源域标签0
+                torch.ones(target_X.size(0))   # 目标域标签1
+            ]).long().to(device)
 
-            domain_preds = domain_classifier(source_features)
+            domain_preds = torch.cat([source_domain, target_domain])
             loss_domain = criterion_domain(domain_preds, domain_labels)
 
-            loss = loss_regression + lambda_val  loss_domain
+            # 总损失
+            loss = loss_reg + lambda_val * loss_domain
 
+            # 反向传播
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
+        print(f'Site {site_index + 1}/{len(site_ids)}, Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}')
 
-        print(f'Site {site_index + 1}{len(site_ids)}, Epoch [{epoch+1}{num_epochs}], Loss {loss.item().4f}')
-
-
+    # 模型评估
     feature_extractor.eval()
     label_predictor.eval()
-
-    with torch.no_grad()
-        test_features = feature_extractor(X_test)
+    with torch.no_grad():
+        test_features = feature_extractor(X_test_tensor)
         y_pred = label_predictor(test_features).squeeze().cpu().numpy()
-        y_true = y_test.squeeze().cpu().numpy()
+        y_true = y_test_tensor.squeeze().cpu().numpy()
 
     kge_score = kge(y_true, y_pred)
-    results.append({'SITE_ID' test_site_id, 'KGE_domain' kge_score})
+    results.append({'SITE_ID': test_site_id, 'KGE_domain': kge_score})
 
+# 保存结果
 results_df = pd.DataFrame(results)
 results_df.to_csv(results_path, index=False)
 print(f'Results saved to {results_path}')
