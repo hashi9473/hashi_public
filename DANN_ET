@@ -83,12 +83,12 @@ results_path = 'D:/results_dann.csv'
 if not os.path.exists(os.path.dirname(results_path)):
     os.makedirs(os.path.dirname(results_path))
 
-# ========== Warm-up策略 ========== #
 def adjust_lambda(progress):
     if progress < 0.8:
         return 0.0
     else:
-        return (progress - 0.8) * 5  
+        adjusted_progress = (progress - 0.8) / 0.2  
+        return 2 / (1 + np.exp(-10 * adjusted_progress)) - 1
 
 # ========== 主训练循环 ========== #
 results = []
