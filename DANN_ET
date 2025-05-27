@@ -67,7 +67,7 @@ def kge(y_true, y_pred):
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-data = dk  
+data = pd.read_csv('D:/train_data.csv') 
 features = ['TA', 'TArange', 'VPD', 'WS', 'SSM', 'RSDN', 'LAI',
             'GSmax', 'G1', 'GPPsat', 'MAT', 'MAP', 'Hc', 'sand_frac']
 target = 'ET'
