@@ -76,10 +76,10 @@ site_ids = data['SITE_ID'].unique()
 results_path = 'D:/results.csv'
 
 def adjust_lambda(progress):
-    if progress < 0.8:
+    if progress < 0.3:
         return 0.0
     else:
-        adjusted_progress = (progress - 0.8) / 0.2 
+        adjusted_progress = (progress - 0.3) / 0.7 
         return 2 / (1 + np.exp(-10 * adjusted_progress)) - 1
 
 def train_model_with_warmup_and_weight(test_site_id):
